@@ -1,110 +1,158 @@
 package main
 
 import (
+	b64 "encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
+	"time"
+
+	"github.com/joho/godotenv"
 )
 
 var currToken = ""
-var currTokenType = "Bearer"
-var currExpiresIn = "3600"
+
+// var currTokenType = "Bearer"
+// var currExpiresIn = "3600" //pick back up later
+var clientId = "" //ideally immutable
+var clientSecret = ""
+var currCode = ""
+var currRefreshToken = ""
+var maxErrors = 20
+var currErrors = 0
 
 func getRoot(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("root get request \n")
+	fmt.Println("/ get request")
 
-	io.WriteString(w, "Not where you should be!\n")
-
-	fmt.Println(r)
-}
-
-func getAuth(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "Getting your info")
-
-	//fmt.Println(r.URL.Query().Encode())
-
-	token := r.URL.Query().Get("access_token")
-	if token != "" {
-		currToken = token
-		//fmt.Println(currToken)
-	}
-	tokenType := r.URL.Query().Get("token_type")
-	if tokenType != "" {
-		currTokenType = tokenType
-		//fmt.Println(currTokenType)
-	}
-	expiresIn := r.URL.Query().Get("expires_in")
-	if expiresIn != "" {
-		currExpiresIn = expiresIn
-		//fmt.Println(currExpiresIn)
+	code := r.URL.Query().Get("code")
+	if code != "" {
+		currCode = code
+		//fmt.Println("Got code!") //Debug
+	} else {
+		fmt.Println("Did not get code. Exitting.")
+		return
 	}
 
-	fmt.Println("auth page get request")
-
-}
-
-func getSuccess(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("got /success get request\n")
-	io.WriteString(w, "authentication success!\n")
+	initAuth("authorization_code")
+	http.Redirect(w, r, "http://localhost:8080/gettrackdata", http.StatusOK)
 }
 
 func handleErrors(myError error) {
 	if myError != nil {
 		fmt.Println(myError)
+		currErrors += 1
+		if currErrors >= maxErrors {
+			log.Fatalln("Fatal Error: Too many errors, exitting") //Prevents you from excessively spamming api. You'll still spam enough to get them to cut you off but at least you'll stop
+		}
 	}
 }
 
 func getCurrentTrack(w http.ResponseWriter, r *http.Request) {
-	currentTrackData := TrackData{}
-	//resp, err := http.Get("https://api.spotify.com/v1/me/player/currently-playing")
+	for {
+		currentTrackData := TrackData{}
 
-	req, err := http.NewRequest("GET", "https://api.spotify.com/v1/me/player/currently-playing", nil)
+		req, err := http.NewRequest("GET", "https://api.spotify.com/v1/me/player/currently-playing", nil)
+		handleErrors(err)
+
+		client := &http.Client{}
+		req.Header = http.Header{
+			"Content-Type":  {"application/json"},
+			"Authorization": {"Bearer " + currToken},
+		}
+		resp, _ := client.Do(req)
+
+		jsonData, errJson := io.ReadAll(resp.Body)
+		handleErrors(errJson)
+
+		errUnmarsh := json.Unmarshal([]byte(jsonData), &currentTrackData)
+		handleErrors(errUnmarsh)
+
+		if len(currentTrackData.Item.Artists) > 0 {
+			io.WriteString(w, currentTrackData.Item.Artists[0].Name+" - "+currentTrackData.Item.Name)
+			sb := []byte("say \"[Spotify Bot] Currently listening to " + currentTrackData.Item.Name + " - " + currentTrackData.Item.Artists[0].Name + "\"")
+			errWF := os.WriteFile("D:\\Program Files (x86)\\Steam\\steamapps\\common\\GarrysMod\\garrysmod\\cfg\\listening.cfg", sb, 0644)
+			handleErrors(errWF)
+		} else {
+			io.WriteString(w, currentTrackData.Item.Name)
+			sb := []byte("say \"[Spotify Bot] Currently listening to " + currentTrackData.Item.Name + "\"")
+			errWF := os.WriteFile("D:\\Program Files (x86)\\Steam\\steamapps\\common\\GarrysMod\\garrysmod\\cfg\\listening.cfg", sb, 0644)
+			handleErrors(errWF)
+		}
+
+		if len(currentTrackData.Item.Artists) == 0 && currentTrackData.Item.Name == "" {
+			initAuth("refresh_token")
+			//break //don't spam the api if we can't read data every 0-0ms
+		}
+		timeLeft := time.Duration(currentTrackData.Item.DurationMs-currentTrackData.ProgressMs) * time.Millisecond
+		if timeLeft < 1 * time.Second {timeLeft = 2 * time.Second} //Prevent it from getting stuck loading the next song and trying to load the song data 40 times
+		time.Sleep(timeLeft)
+		//fmt.Println("milliseconds left: ", timeLeft) //debug to make sure we're not hitting the api too much
+		fmt.Println("Getting track data")
+	}
+}
+
+func initAuth(grantType string) {
+	//https://accounts.spotify.com/en/authorize?client_id=c273adf519ee41afa11a5c2c2e6482b3&redirect_uri=http%3A%2F%2Flocalhost%3A8080&response_type=code&scope=user-read-currently-playing
+	authData := AuthData{}
+	form := url.Values{}
+
+	if grantType == "authorization_code" { // do code stuff
+		form.Add("code", currCode)
+	} else if grantType == "refresh_token" {
+		form.Add("refresh_token", currRefreshToken)
+	}
+
+	form.Add("redirect_uri", "http://localhost:8080")
+	form.Add("grant_type", grantType)
+
+	req, err := http.NewRequest("POST", "https://accounts.spotify.com/api/token", strings.NewReader(form.Encode()))
 	handleErrors(err)
-
+	encodedClientData := b64.StdEncoding.EncodeToString([]byte(clientId + ":" + clientSecret))
 	client := &http.Client{}
 	req.Header = http.Header{
-		"Content-Type":  {"application/json"},
-		"Authorization": {"Bearer " + currToken},
+		"Content-Type":  {"application/x-www-form-urlencoded"},
+		"Authorization": {"Basic " + encodedClientData},
 	}
-	resp, err := client.Do(req)
+
+	resp, _ := client.Do(req)
 
 	jsonData, errJson := io.ReadAll(resp.Body)
 	handleErrors(errJson)
 
-	errUnmarsh := json.Unmarshal([]byte(jsonData), &currentTrackData)
+	errUnmarsh := json.Unmarshal([]byte(jsonData), &authData)
 	handleErrors(errUnmarsh)
 
-	//fmt.Println(currentTrackData.Item)
-
-	if len(currentTrackData.Item.Artists) > 0 {
-		io.WriteString(w, currentTrackData.Item.Artists[0].Name+" - "+currentTrackData.Item.Name)
-		sb := []byte("say \"[Spotify Bot] Currently listening to " + currentTrackData.Item.Name + " - " + currentTrackData.Item.Artists[0].Name + "\"")
-		errWF := os.WriteFile("D:\\Program Files (x86)\\Steam\\steamapps\\common\\GarrysMod\\garrysmod\\cfg\\listening.cfg", sb, 0644)
-		handleErrors(errWF)
-	} else {
-		io.WriteString(w, currentTrackData.Item.Name)
-		sb := []byte("say \"[Spotify Bot] Currently listening to " + currentTrackData.Item.Name + "\"")
-		errWF := os.WriteFile("D:\\Program Files (x86)\\Steam\\steamapps\\common\\GarrysMod\\garrysmod\\cfg\\listening.cfg", sb, 0644)
-		handleErrors(errWF)
+	if authData.AccessToken != "" {
+		currToken = authData.AccessToken
 	}
+
+	if authData.RefreshToken != "" {
+		currRefreshToken = authData.RefreshToken
+	}
+
 }
 
 func main() {
-	http.Handle("/", http.FileServer(http.Dir("./public")))
-	http.HandleFunc("/getauth", getAuth)
-	http.HandleFunc("/success", getSuccess)
+	//Alright, time to get yucky
+	handleErrors(godotenv.Load())
+
+	clientId = os.Getenv("client_id")
+	clientSecret = os.Getenv("client_secret")
+
+	http.HandleFunc("/", getRoot)
 	http.HandleFunc("/gettrackdata", getCurrentTrack)
 
-	errSrv := http.ListenAndServe(":8080", nil)
+	fmt.Println("Started. ")
+	errSrv := http.ListenAndServe("localhost:8080", nil)
 	if errSrv != nil {
 		fmt.Println(errSrv)
 	}
 }
-
-//https://accounts.spotify.com/en/authorize?client_id=c273adf519ee41afa11a5c2c2e6482b3&redirect_uri=http%3A%2F%2Flocalhost%3A8080&response_type=token&scope=user-read-currently-playing
-//You would not BELIEVE the hoops i jumped through to access fragments
 
 type TrackData struct {
 	Device struct {
@@ -226,4 +274,12 @@ type TrackData struct {
 		TogglingRepeatTrack   bool `json:"toggling_repeat_track"`
 		TransferringPlayback  bool `json:"transferring_playback"`
 	} `json:"actions"`
+}
+
+type AuthData struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	Scope        string `json:"scope"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token"`
 }
