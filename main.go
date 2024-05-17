@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,13 +19,18 @@ import (
 var currToken = ""
 
 // var currTokenType = "Bearer"
-// var currExpiresIn = "3600" //pick back up later
-var clientId = "" //ideally immutable
-var clientSecret = ""
+// var currExpiresIn = "3600" //in seconds //pick back up later
+
 var currCode = ""
 var currRefreshToken = ""
-var maxErrors = 20
 var currErrors = 0
+
+/* Env vars section*/
+var clientId = "" //ideally immutable
+var clientSecret = ""
+var maxErrors = 20
+var cfgTargetPath = ""
+
 
 func getRoot(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("/ get request")
@@ -39,14 +45,20 @@ func getRoot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	initAuth("authorization_code")
-	http.Redirect(w, r, "http://localhost:8080/gettrackdata", http.StatusOK)
+	http.Redirect(w, r, "http://localhost:8080/gettrackdata", http.StatusOK) //Click the "Ok" to start the process of getting track data automatically
+}
+
+func errorLimitCheck() bool {
+	if maxErrors == -1 {return false} //If we are ignoring errors and just hoping that they aren't important
+	if currErrors >= maxErrors {return true}
+	return false
 }
 
 func handleErrors(myError error) {
 	if myError != nil {
 		fmt.Println(myError)
 		currErrors += 1
-		if currErrors >= maxErrors {
+		if errorLimitCheck() {
 			log.Fatalln("Fatal Error: Too many errors, exitting") //Prevents you from excessively spamming api. You'll still spam enough to get them to cut you off but at least you'll stop
 		}
 	}
@@ -75,12 +87,12 @@ func getCurrentTrack(w http.ResponseWriter, r *http.Request) {
 		if len(currentTrackData.Item.Artists) > 0 {
 			io.WriteString(w, currentTrackData.Item.Artists[0].Name+" - "+currentTrackData.Item.Name)
 			sb := []byte("say \"[Spotify Bot] Currently listening to " + currentTrackData.Item.Name + " - " + currentTrackData.Item.Artists[0].Name + "\"")
-			errWF := os.WriteFile("D:\\Program Files (x86)\\Steam\\steamapps\\common\\GarrysMod\\garrysmod\\cfg\\listening.cfg", sb, 0644)
+			errWF := os.WriteFile(cfgTargetPath, sb, 0644)
 			handleErrors(errWF)
 		} else {
 			io.WriteString(w, currentTrackData.Item.Name)
 			sb := []byte("say \"[Spotify Bot] Currently listening to " + currentTrackData.Item.Name + "\"")
-			errWF := os.WriteFile("D:\\Program Files (x86)\\Steam\\steamapps\\common\\GarrysMod\\garrysmod\\cfg\\listening.cfg", sb, 0644)
+			errWF := os.WriteFile(cfgTargetPath, sb, 0644)
 			handleErrors(errWF)
 		}
 
@@ -143,6 +155,11 @@ func main() {
 
 	clientId = os.Getenv("client_id")
 	clientSecret = os.Getenv("client_secret")
+	cfgTargetPath = os.Getenv("escaped_cfg_file_path")
+
+	maxErrorsStr, errError := strconv.ParseInt(os.Getenv("max_errors"), 10, 0)
+	handleErrors(errError)
+	maxErrors = int(maxErrorsStr) //lol???
 
 	http.HandleFunc("/", getRoot)
 	http.HandleFunc("/gettrackdata", getCurrentTrack)
