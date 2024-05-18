@@ -24,6 +24,7 @@ var currToken = ""
 var currCode = ""
 var currRefreshToken = ""
 var currErrors = 0
+var artists = ""
 
 /* Env vars section*/
 var clientId = "" //ideally immutable
@@ -41,7 +42,7 @@ func getRoot(w http.ResponseWriter, r *http.Request) {
 		currCode = code
 		//fmt.Println("Got code!") //Debug
 	} else {
-		fmt.Println("Did not get code. Exitting.")
+		fmt.Println("Auth failed. Try authorizing again.")
 		return
 	}
 
@@ -85,7 +86,7 @@ func getCurrentTrack(w http.ResponseWriter, r *http.Request) {
 		errUnmarsh := json.Unmarshal([]byte(jsonData), &currentTrackData)
 		handleErrors(errUnmarsh)
 
-		artists := ""
+		artists = ""
 
 		for _, artist := range currentTrackData.Item.Artists {
 			if len(artists) > 0 {artists += ", "} //I have absolutely no idea if this works :)
@@ -94,13 +95,15 @@ func getCurrentTrack(w http.ResponseWriter, r *http.Request) {
 
 		if len(currentTrackData.Item.Artists) > 0 {
 			io.WriteString(w, currentTrackData.Item.Artists[0].Name+" - "+currentTrackData.Item.Name) //This is already pretty minimal I don't plan to change it
-			customMsg = strings.Replace(customMsg, "{SongName}", currentTrackData.Item.Name, -1)
-			customMsg = strings.Replace(customMsg, "{Artists}", artists, -1)
+			updatedCustomMsg := strings.Replace(customMsg, "{SongName}", currentTrackData.Item.Name, -1)
+			updatedCustomMsg = strings.Replace(updatedCustomMsg, "{Artists}", artists, -1)
 			//sb := []byte("say \"[Spotify Bot] Currently listening to " + currentTrackData.Item.Name + " - " + currentTrackData.Item.Artists[0].Name + "\"")
-			sb := []byte(customMsg)
+			sb := []byte(updatedCustomMsg)
 			errWF := os.WriteFile(cfgTargetPath, sb, 0644)
 			handleErrors(errWF)
 		}
+
+		
 
 		if len(currentTrackData.Item.Artists) == 0 && currentTrackData.Item.Name == "" {
 			initAuth("refresh_token")
