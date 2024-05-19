@@ -16,10 +16,9 @@ custom_message NEEDS to include the command like say or echo. Make sure you use 
 
 ## Running the app
 
-If you haven't looked through my comments or spotify's api docs, you'll want to go to:
-https://accounts.spotify.com/en/authorize?client_id=Your_ClientId_Here&redirect_uri=http%3A%2F%2Flocalhost%3A8080&response_type=code&scope=user-read-currently-playing Make sure you replace the 'Your_ClientId_Here' with your app's client ID.
-After it loads, click the OK and it'll start getting track data and you can close the tab.
+Navigate to http://localhost:8080 and the app should take you everywhere you need to go, provided you gave a valid client_id and secret.
+Make sure to click the "Spotify Authorization" button and login if you're logged out.
 
-Use a bind or type "exec config_name.cfg" into console to run the command
+Use a bind or type "exec config_name.cfg" into console to run the command.
 
-More customization hopefully coming soon. Thinking about making a web ui.
+More customization coming soon.

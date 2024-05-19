@@ -24,7 +24,7 @@ var currToken = ""
 var currCode = ""
 var currRefreshToken = ""
 var currErrors = 0
-var artists = ""
+var alreadyChecking = false
 
 /* Env vars section*/
 var clientId = "" //ideally immutable
@@ -33,26 +33,29 @@ var maxErrors = 20
 var cfgTargetPath = ""
 var customMsg = ""
 
-
 func getRoot(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("/ get request")
+	fmt.Println("root get request")
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
 
 	code := r.URL.Query().Get("code")
 	if code != "" {
 		currCode = code
-		//fmt.Println("Got code!") //Debug
-	} else {
-		fmt.Println("Auth failed. Try authorizing again.")
-		return
-	}
-
+	} 
+	http.Redirect(w, r, "http://localhost:8080/panel?client_id="+clientId, http.StatusTemporaryRedirect)
 	initAuth("authorization_code")
-	http.Redirect(w, r, "http://localhost:8080/gettrackdata", http.StatusOK) //Click the "Ok" to start the process of getting track data automatically
+	//Click the "Ok" to start the process of getting track data automatically
 }
 
 func errorLimitCheck() bool {
-	if maxErrors == -1 {return false} //If we are ignoring errors and just hoping that they aren't important
-	if currErrors >= maxErrors {return true}
+	if maxErrors == -1 {
+		return false
+	} //If we are ignoring errors and just hoping that they aren't important
+	if currErrors >= maxErrors {
+		return true
+	}
 	return false
 }
 
@@ -66,59 +69,66 @@ func handleErrors(myError error) {
 	}
 }
 
-func getCurrentTrack(w http.ResponseWriter, r *http.Request) {
+func getCurrentTrack() (string, string, time.Duration) {
+	currentTrackData := TrackData{}
+
+	req, err := http.NewRequest("GET", "https://api.spotify.com/v1/me/player/currently-playing", nil)
+	handleErrors(err)
+
+	client := &http.Client{}
+	req.Header = http.Header{
+		"Content-Type":  {"application/json"},
+		"Authorization": {"Bearer " + currToken},
+	}
+	resp, _ := client.Do(req)
+
+	jsonData, errJson := io.ReadAll(resp.Body)
+	handleErrors(errJson)
+
+	errUnmarsh := json.Unmarshal([]byte(jsonData), &currentTrackData)
+	handleErrors(errUnmarsh)
+
+	artists := ""
+
+	for _, artist := range currentTrackData.Item.Artists {
+		if len(artists) > 0 {
+			artists += ", "
+		}
+		artists += artist.Name
+	}
+
+	if len(currentTrackData.Item.Artists) > 0 {
+		updatedCustomMsg := strings.Replace(customMsg, "{SongName}", currentTrackData.Item.Name, -1)
+		updatedCustomMsg = strings.Replace(updatedCustomMsg, "{Artists}", artists, -1)
+		sb := []byte(updatedCustomMsg)
+		errWF := os.WriteFile(cfgTargetPath, sb, 0644)
+		handleErrors(errWF)
+	}
+
+	if len(currentTrackData.Item.Artists) == 0 && currentTrackData.Item.Name == "" {
+		initAuth("refresh_token") //don't spam the api if we can't read data every 0-0ms
+	}
+	timeLeft := time.Duration(currentTrackData.Item.DurationMs-currentTrackData.ProgressMs) * time.Millisecond
+
+	//fmt.Println("milliseconds left: ", timeLeft) //debug to make sure we're not hitting the api too much
+	fmt.Println("Getting track data")
+
+	return currentTrackData.Item.Name, artists, timeLeft
+}
+
+func repeatCheckTrackData(_ http.ResponseWriter, _ *http.Request) {
+	if alreadyChecking {return}
+	alreadyChecking = true
 	for {
-		currentTrackData := TrackData{}
-
-		req, err := http.NewRequest("GET", "https://api.spotify.com/v1/me/player/currently-playing", nil)
-		handleErrors(err)
-
-		client := &http.Client{}
-		req.Header = http.Header{
-			"Content-Type":  {"application/json"},
-			"Authorization": {"Bearer " + currToken},
-		}
-		resp, _ := client.Do(req)
-
-		jsonData, errJson := io.ReadAll(resp.Body)
-		handleErrors(errJson)
-
-		errUnmarsh := json.Unmarshal([]byte(jsonData), &currentTrackData)
-		handleErrors(errUnmarsh)
-
-		artists = ""
-
-		for _, artist := range currentTrackData.Item.Artists {
-			if len(artists) > 0 {artists += ", "} //I have absolutely no idea if this works :)
-			artists += artist.Name
-		}
-
-		if len(currentTrackData.Item.Artists) > 0 {
-			io.WriteString(w, currentTrackData.Item.Artists[0].Name+" - "+currentTrackData.Item.Name) //This is already pretty minimal I don't plan to change it
-			updatedCustomMsg := strings.Replace(customMsg, "{SongName}", currentTrackData.Item.Name, -1)
-			updatedCustomMsg = strings.Replace(updatedCustomMsg, "{Artists}", artists, -1)
-			//sb := []byte("say \"[Spotify Bot] Currently listening to " + currentTrackData.Item.Name + " - " + currentTrackData.Item.Artists[0].Name + "\"")
-			sb := []byte(updatedCustomMsg)
-			errWF := os.WriteFile(cfgTargetPath, sb, 0644)
-			handleErrors(errWF)
-		}
-
-		
-
-		if len(currentTrackData.Item.Artists) == 0 && currentTrackData.Item.Name == "" {
-			initAuth("refresh_token")
-			//break //don't spam the api if we can't read data every 0-0ms
-		}
-		timeLeft := time.Duration(currentTrackData.Item.DurationMs-currentTrackData.ProgressMs) * time.Millisecond
-		if timeLeft < 1 * time.Second {timeLeft = 2 * time.Second} //Prevent it from getting stuck loading the next song and trying to load the song data 40 times
+		_, _, timeLeft := getCurrentTrack()
+		if timeLeft < 1 * time.Second {
+			timeLeft = 2 * time.Second
+		} //Prevent it from getting stuck loading the next song and trying to load the song data 40 times
 		time.Sleep(timeLeft)
-		//fmt.Println("milliseconds left: ", timeLeft) //debug to make sure we're not hitting the api too much
-		fmt.Println("Getting track data")
 	}
 }
 
 func initAuth(grantType string) {
-	//https://accounts.spotify.com/en/authorize?client_id=c273adf519ee41afa11a5c2c2e6482b3&redirect_uri=http%3A%2F%2Flocalhost%3A8080&response_type=code&scope=user-read-currently-playing
 	authData := AuthData{}
 	form := url.Values{}
 
@@ -155,7 +165,23 @@ func initAuth(grantType string) {
 	if authData.RefreshToken != "" {
 		currRefreshToken = authData.RefreshToken
 	}
+}
 
+func displayTrackData(w http.ResponseWriter, r *http.Request) {
+	trackName, trackArtists, timeLeft := getCurrentTrack()
+
+	//return json so it's easier to reformat in js
+	w.Header().Set("Content-Type", "application/json")
+	//Also use statuses properly* so we know if there's a problem
+	w.WriteHeader(http.StatusOK)
+
+	responseTrackData := &ResponseTrackData{
+		TrackName:    trackName,
+		ArtistsNames: trackArtists,
+		TimeLeft:     timeLeft.String(),
+	}
+
+	json.NewEncoder(w).Encode(responseTrackData)
 }
 
 func main() {
@@ -171,14 +197,20 @@ func main() {
 	handleErrors(errError)
 	maxErrors = int(maxErrorsStr) //lol???
 
+	http.HandleFunc("/gettrackdata", displayTrackData)
+	http.Handle("/panel/", http.StripPrefix("/panel/", http.FileServer(http.Dir("./public/panel"))))
+	http.HandleFunc("/repeatcheck", repeatCheckTrackData)
 	http.HandleFunc("/", getRoot)
-	http.HandleFunc("/gettrackdata", getCurrentTrack)
 
-	fmt.Println("Started. ")
+	fmt.Println("Started.")
 	errSrv := http.ListenAndServe("localhost:8080", nil)
-	if errSrv != nil {
-		fmt.Println(errSrv)
-	}
+	handleErrors(errSrv)
+}
+
+type ResponseTrackData struct {
+	TrackName    string `json:"track_name"`
+	ArtistsNames string `json:"artists"`
+	TimeLeft     string `json:"time_left"`
 }
 
 type TrackData struct {

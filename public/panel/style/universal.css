@@ -1,0 +1,37 @@
+body {
+    background-color: #1F1F1F;
+}
+h1 {
+    align-self: top;
+    justify-content: center;
+    color: #3d3d3d;
+}
+p {
+    color: #363636;
+}
+
+.flex-container {
+    display: flex;
+    flex-direction: column;
+    background-color: rgb(155, 155, 155);
+    width: 20%;
+    height: 300px;
+    margin-top: 15%;
+    margin-right: 20px;
+    padding: 10px;
+    align-items: center;
+}
+
+.source-fl-container {
+    display: flex;
+    margin: 10%;
+    justify-content: center;
+}
+
+.slick-button {
+    width: 30%;
+    align-self: auto;
+}
+
+
+
