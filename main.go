@@ -34,7 +34,7 @@ var cfgTargetPath = ""
 var customMsg = ""
 
 func getRoot(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("root get request")
+	fmt.Println(time.Now().Format(time.StampMilli), "root get request")
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -43,7 +43,7 @@ func getRoot(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	if code != "" {
 		currCode = code
-	} 
+	}
 	http.Redirect(w, r, "http://localhost:8080/panel?client_id="+clientId, http.StatusTemporaryRedirect)
 	initAuth("authorization_code")
 	//Click the "Ok" to start the process of getting track data automatically
@@ -61,7 +61,7 @@ func errorLimitCheck() bool {
 
 func handleErrors(myError error) {
 	if myError != nil {
-		fmt.Println(myError)
+		fmt.Println(time.Now().Format(time.StampMilli), myError)
 		currErrors += 1
 		if errorLimitCheck() {
 			log.Fatalln("Fatal Error: Too many errors, exitting") //Prevents you from excessively spamming api. You'll still spam enough to get them to cut you off but at least you'll stop
@@ -70,6 +70,9 @@ func handleErrors(myError error) {
 }
 
 func getCurrentTrack() (string, string, time.Duration) {
+	if currCode == "" {
+		return "", "", time.Duration(0).Abs()
+	}
 	currentTrackData := TrackData{}
 
 	req, err := http.NewRequest("GET", "https://api.spotify.com/v1/me/player/currently-playing", nil)
@@ -111,19 +114,27 @@ func getCurrentTrack() (string, string, time.Duration) {
 	timeLeft := time.Duration(currentTrackData.Item.DurationMs-currentTrackData.ProgressMs) * time.Millisecond
 
 	//fmt.Println("milliseconds left: ", timeLeft) //debug to make sure we're not hitting the api too much
-	fmt.Println("Getting track data")
+	fmt.Println(time.Now().Format(time.StampMilli), "Getting track data")
 
 	return currentTrackData.Item.Name, artists, timeLeft
 }
 
-func repeatCheckTrackData(_ http.ResponseWriter, _ *http.Request) {
+func repeatCheckTrackData(w http.ResponseWriter, _ *http.Request) {
+	if currCode == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 	if alreadyChecking {return}
 	alreadyChecking = true
 	for {
-		_, _, timeLeft := getCurrentTrack()
-		if timeLeft < 1 * time.Second {
+		songName, _, timeLeft := getCurrentTrack()
+		if timeLeft == 0 && songName == "" { //Handle no song playing
+			timeLeft = 10 * time.Second //Don't hit the api too much. Maybe go higher
+		}
+		if timeLeft < 1*time.Second {
 			timeLeft = 2 * time.Second
 		} //Prevent it from getting stuck loading the next song and trying to load the song data 40 times
+
 		time.Sleep(timeLeft)
 	}
 }
@@ -168,12 +179,17 @@ func initAuth(grantType string) {
 }
 
 func displayTrackData(w http.ResponseWriter, r *http.Request) {
-	trackName, trackArtists, timeLeft := getCurrentTrack()
+	trackName, trackArtists, timeLeft := "", "", time.Duration(0).Abs()
+	if currCode != "" {
+		trackName, trackArtists, timeLeft = getCurrentTrack()
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusUnauthorized)
+	}
 
 	//return json so it's easier to reformat in js
 	w.Header().Set("Content-Type", "application/json")
 	//Also use statuses properly* so we know if there's a problem
-	w.WriteHeader(http.StatusOK)
 
 	responseTrackData := &ResponseTrackData{
 		TrackName:    trackName,
@@ -202,7 +218,7 @@ func main() {
 	http.HandleFunc("/repeatcheck", repeatCheckTrackData)
 	http.HandleFunc("/", getRoot)
 
-	fmt.Println("Started.")
+	fmt.Println(time.Now().Format(time.StampMilli), "Started.")
 	errSrv := http.ListenAndServe("localhost:8080", nil)
 	handleErrors(errSrv)
 }
