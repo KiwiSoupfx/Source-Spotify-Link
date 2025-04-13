@@ -1,6 +1,6 @@
 let clientId = "";
 let repeatTrackTimeoutId = 0;
-let timeout = 2000;
+let timeout = 1000;
 
 let isConnected = false;
 let hitRepeat = false;
@@ -22,16 +22,11 @@ document.addEventListener('DOMContentLoaded', function() {
     getSpotTrackData().then();
 })
 
-function updateCheckTimeout() {
-    clearTimeout(repeatTrackTimeoutId);
-    if (timeout == 0) {timeout = 2000;}
-    repeatTrackTimeoutId = setTimeout(getSpotTrackData, timeout+1000);
-}
-
 function handleGetAuthButton() {
     window.location.href = "https://accounts.spotify.com/en/authorize?client_id="+ clientId + "&redirect_uri=http%3A%2F%2Flocalhost%3A8080&response_type=code&scope=user-read-currently-playing";
 }
 
+/*
 function parseTimeStamp(timeStr) {
     if (!timeStr) {return 500;}
         //TODO: work out format so we can set up a loop to update the panel
@@ -41,7 +36,7 @@ function parseTimeStamp(timeStr) {
         //00.000 .> s
         //.000 -> ms or s+1
         //???ms -> ms
-        let trackTimeout = 0; //Oops. Probably don't set our whole timeout to 0 even if for a second
+        let trackTimeout = 1000; //Oops. Probably don't set our whole timeout to 0 even if for a second
         let hours = "";
         let minutes = "";
         let seconds = "";
@@ -50,7 +45,7 @@ function parseTimeStamp(timeStr) {
     
         if (timeStr.includes("ms")) { //It's important that we don't misunderstand milliseconds as minutes.
             milliseconds = parseInt(timeStr.replace("ms", "")); //A little sloppy
-            trackTimeout = milliseconds+1000;
+            trackTimeout = milliseconds+2000;
         } else {
             for (let i = 0; i < timeStr.length; i++) {
                 //to go backwards we do .length-i
@@ -85,12 +80,17 @@ function parseTimeStamp(timeStr) {
                     hours += currChar
                 }
             }
+            if (handleReverse((milliseconds)).length < 3 ) milliseconds = "0"+milliseconds
+            if (handleReverse((milliseconds)).length < 2 ) milliseconds = "00"+milliseconds
             trackTimeout = parseInt(handleReverse(milliseconds)) + (parseInt(handleReverse(seconds)) * 1000) + (parseInt(handleReverse(minutes)) * 60000) + (parseInt(handleReverse(hours)) * 3600000000);
         }
         if (trackTimeout == 0) {trackTimeout = 2000;}
+        console.log("time string: ", timeStr)
+        console.log("Hours: ", parseInt(handleReverse(hours)), "Minutes: ", parseInt(handleReverse(minutes)), "Seconds: ", parseInt(handleReverse(seconds)), "Milliseconds: ", parseInt(handleReverse(milliseconds)))
+        console.log("Track timeout: ", trackTimeout)
         return trackTimeout;
 }
-
+*/
 
 async function getSpotTrackData() {
     let trackDataResp = await fetch('/gettrackdata', {method: "GET"});
@@ -101,7 +101,10 @@ async function getSpotTrackData() {
 
     //Update text on page
     if (trackData.track_name != "" && trackData.artists != "") {
-        document.getElementById("currTrack").textContent = trackData.track_name + " - " + trackData.artists + " " + trackData.time_left + " left";
+        timeout = parseInt(trackData.time_left);
+        let timeString = msToTime(trackData.time_left)
+        document.getElementById("currTrack").textContent = trackData.track_name + " - " + trackData.artists;
+        document.getElementById("timeLeft").textContent  = timeString + " left";
         document.getElementById("connectStatus").textContent = "Connected.";
         document.getElementById("authBox").style.display = "none";
         isConnected = true;
@@ -109,14 +112,34 @@ async function getSpotTrackData() {
         document.getElementById("currTrack").textContent = "No song detected.";
         isConnected = false; //Not necessarily true
     }
-    timeout = parseTimeStamp(trackData.time_left);
     if (!hitRepeat) {fetch('/repeatcheck', {method: "GET"}).then(); startRepeat(); hitRepeat = true; return;} //Make sure we're still getting the data if we close the tab
-    updateCheckTimeout();
+
+
+    clearTimeout(repeatTrackTimeoutId);
+    if (timeout < 1000) {timeout = 1000;}
+
+    let extraTimeout = timeout + 1000 //Add a little extra so we don't sit on 0 seconds and then check again in a second anyway
+
+    repeatTrackTimeoutId = setTimeout(getSpotTrackData, extraTimeout);
+    //await timer(extraTimeout)
+}
+
+function msToTime(duration) {
+    var milliseconds = Math.floor((duration % 1000) / 100),
+      seconds = Math.floor((duration / 1000) % 60),
+      minutes = Math.floor((duration / (1000 * 60)) % 60),
+      hours = Math.floor((duration / (1000 * 60 * 60)) % 24);
+  
+    hours = (hours < 10) ? "0" + hours : hours;
+    minutes = (minutes < 10) ? "0" + minutes : minutes;
+    seconds = (seconds < 10) ? "0" + seconds : seconds;
+  
+    return hours + ":" + minutes + ":" + seconds + "." + milliseconds;
 }
 
 //Async so we make sure we get data before updating page
 async function handleGetTrackButton() {
-    getSpotTrackData().then(() => {updateCheckTimeout();});
+    getSpotTrackData().then(() => {/*getSpotTrackData();*/});
 }
 
 function handleReverse(str) {
@@ -147,7 +170,8 @@ async function startRepeat() { //Because of how this works, they'll both be eval
     if (!isConnected) {return;} //No point in looping if we're not connected.
     for (;;) {
         if (timeout < 1000) {timeout += 1000;}
-        await timer(timeout);
+
+        await timer(timeout + 2000); //adding extra time hopefully preventing stopping on 0s so often
         await getSpotTrackData("loop"); //Not a fan of how it runs twice as it evaluates the function because updateCheckTimeout is at the end of this function.
     }
 }

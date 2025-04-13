@@ -24,17 +24,17 @@ var (
 	// var currTokenExp = "3600" //in seconds //pick back up later
 	configNames []string
 
-	currSpotCode = ""
+	currSpotCode     = ""
 	currRefreshToken = ""
-	currErrors = 0
-	alreadyChecking = false
+	currErrors       = 0
+	alreadyChecking  = false
 
 	/* config section */
-	clientId = "" 
-	clientSecret = ""
-	maxErrors = 20
-	cfgTargetPath = ""
-	customMsg = ""
+	clientId       = ""
+	clientSecret   = ""
+	maxErrors      = 20
+	cfgTargetPath  = ""
+	customMsg      = ""
 	scrobbleAPIKey = ""
 	lastfmUsername = ""
 )
@@ -191,6 +191,7 @@ func repeatCheckTrackData(w http.ResponseWriter, _ *http.Request) {
 		if timeLeft == 0 && songName == "" { //Handle no song playing
 			timeLeft = 3 * time.Second //Don't hit the api too much. Maybe go higher
 		}
+
 		if timeLeft < 1*time.Second {
 			timeLeft = 2 * time.Second
 		} //Prevent it from getting stuck loading the next song and trying to load the song data 40 times
@@ -250,12 +251,13 @@ func displayTrackData(w http.ResponseWriter, r *http.Request) {
 
 	//return json so it's easier to reformat in js
 	w.Header().Set("Content-Type", "application/json")
+	timeLeftMsString := strconv.Itoa(int(timeLeft.Milliseconds()))
 	//Also use statuses properly* so we know if there's a problem
-
 	responseTrackData := &ResponseTrackData{
-		TrackName:         trackName,
-		ArtistsNames:      trackArtists,
-		TimeLeft:          timeLeft.String(),
+		TrackName:    trackName,
+		ArtistsNames: trackArtists,
+		//		TimeLeft:          timeLeft.String(),
+		TimeLeft:          timeLeftMsString,
 		ListeningPlatform: platform,
 	}
 
@@ -281,8 +283,8 @@ func main() {
 	//Alright, time to get yucky
 
 	loadEnv() //Get rid of this and opt for config after current version.
-			  //Keeping it in place for this ver so anyone that has used 
-			  //it before can upgrade to a config easily
+	//Keeping it in place for this ver so anyone that has used
+	//it before can upgrade to a config easily
 
 	configs := getCfgFiles()
 	if len(configs) > 0 { //Potentially problematic. Could be a few reasons why we don't find any configs
@@ -312,12 +314,13 @@ func main() {
 	errSrv := http.ListenAndServe("localhost:8080", nil)
 	handleErrors(errSrv)
 }
+
 /*
 func writeConfig(confName string, confData ConfigData) { //This will be super annoying if we're getting all this from a single get request
 
 }*/
 
-func loadAllConfigs() ([]string) {
+func loadAllConfigs() []string {
 	configs := getCfgFiles()
 	if len(configs) < 1 {
 		newConfig("Default")
@@ -332,15 +335,15 @@ func loadConfWrapper(w http.ResponseWriter, _ *http.Request) {
 
 	type Response struct {
 		Names []string `json:"config_names"`
-	} 
+	}
 
-	resp := &Response{Names: configNames,}
+	resp := &Response{Names: configNames}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
-func getCfgFiles() ([]string){
+func getCfgFiles() []string {
 
 	fsdir := os.DirFS("./configs")
 
@@ -354,13 +357,13 @@ func newConfig(confName string) {
 	config := ConfigData{
 		ConfigName: confName,
 		ConfigSettings: ConfigSettings{
-			ClientId: clientId,
-			ClientSecret: clientSecret,
-			ScrobbleAPIKey: scrobbleAPIKey,
-			LastFMUsername: lastfmUsername,
+			ClientId:           clientId,
+			ClientSecret:       clientSecret,
+			ScrobbleAPIKey:     scrobbleAPIKey,
+			LastFMUsername:     lastfmUsername,
 			EscapedCFGFilePath: cfgTargetPath,
-			MaxErrors: maxErrors,
-			CustomMessage: customMsg,
+			MaxErrors:          maxErrors,
+			CustomMessage:      customMsg,
 		},
 	}
 
@@ -379,7 +382,7 @@ func loadConfig(confIdx int) {
 
 func loadConfigByName(confName string) {
 	var jsonData ConfigData
-	fileData, err := os.ReadFile("configs/"+confName)
+	fileData, err := os.ReadFile("configs/" + confName)
 	handleErrors(err)
 
 	errUnmarsh := json.Unmarshal(fileData, &jsonData)
@@ -573,16 +576,16 @@ type AuthData struct {
 }
 
 type ConfigData struct {
-	ConfigName string `json:"config_name"`
+	ConfigName     string         `json:"config_name"`
 	ConfigSettings ConfigSettings `json:"config_settings"`
 }
 
 type ConfigSettings struct {
-	ClientId string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	ScrobbleAPIKey string `json:"scrobble_api_key"`
-	LastFMUsername string `json:"lastfm_username"`
+	ClientId           string `json:"client_id"`
+	ClientSecret       string `json:"client_secret"`
+	ScrobbleAPIKey     string `json:"scrobble_api_key"`
+	LastFMUsername     string `json:"lastfm_username"`
 	EscapedCFGFilePath string `json:"escaped_cfg_file_path"`
-	MaxErrors int `json:"max_errors"`
-	CustomMessage string `json:"custom_message"`
-} 
+	MaxErrors          int    `json:"max_errors"`
+	CustomMessage      string `json:"custom_message"`
+}
