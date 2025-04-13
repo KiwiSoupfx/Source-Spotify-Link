@@ -1,2 +1,5 @@
 .env
 go.mod
+/configs/
+*.exe*
+*.zip

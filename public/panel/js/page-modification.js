@@ -1,6 +1,6 @@
 let clientId = "";
 let repeatTrackTimeoutId = 0;
-let timeout = 1000;
+let timeout = 2000;
 
 let isConnected = false;
 let hitRepeat = false;
@@ -24,8 +24,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function updateCheckTimeout() {
     clearTimeout(repeatTrackTimeoutId);
-    if (timeout == 0) {timeout = 500;}
-    repeatTrackTimeoutId = setTimeout(getSpotTrackData, timeout+100);
+    if (timeout == 0) {timeout = 2000;}
+    repeatTrackTimeoutId = setTimeout(getSpotTrackData, timeout+1000);
 }
 
 function handleGetAuthButton() {
@@ -50,7 +50,7 @@ function parseTimeStamp(timeStr) {
     
         if (timeStr.includes("ms")) { //It's important that we don't misunderstand milliseconds as minutes.
             milliseconds = parseInt(timeStr.replace("ms", "")); //A little sloppy
-            trackTimeout = milliseconds+100;
+            trackTimeout = milliseconds+1000;
         } else {
             for (let i = 0; i < timeStr.length; i++) {
                 //to go backwards we do .length-i
@@ -87,7 +87,7 @@ function parseTimeStamp(timeStr) {
             }
             trackTimeout = parseInt(handleReverse(milliseconds)) + (parseInt(handleReverse(seconds)) * 1000) + (parseInt(handleReverse(minutes)) * 60000) + (parseInt(handleReverse(hours)) * 3600000000);
         }
-        if (trackTimeout == 0) {trackTimeout = 500;}
+        if (trackTimeout == 0) {trackTimeout = 2000;}
         return trackTimeout;
 }
 

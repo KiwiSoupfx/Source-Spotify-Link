@@ -21,7 +21,7 @@ var (
 	currSpotToken = ""
 
 	// var currTokenType = "Bearer"
-	// var currExpiresIn = "3600" //in seconds //pick back up later
+	// var currTokenExp = "3600" //in seconds //pick back up later
 	configNames []string
 
 	currSpotCode = ""
@@ -29,8 +29,8 @@ var (
 	currErrors = 0
 	alreadyChecking = false
 
-	/* Env vars section*/
-	clientId = "" //ideally immutable
+	/* config section */
+	clientId = "" 
 	clientSecret = ""
 	maxErrors = 20
 	cfgTargetPath = ""
@@ -277,22 +277,25 @@ func loadEnv() {
 	maxErrors = int(maxErrorsStr) //lol???
 }
 
-/*
-func lEnvWrapper(_ http.ResponseWriter, _ *http.Request) {
-	fmt.Println(time.Now().Format(time.StampMilli), "Reloading env.")
-	loadEnv()
-}
-*/
 func main() {
 	//Alright, time to get yucky
 
-	loadEnv()
+	loadEnv() //Get rid of this and opt for config after current version.
+			  //Keeping it in place for this ver so anyone that has used 
+			  //it before can upgrade to a config easily
+
+	configs := getCfgFiles()
+	if len(configs) > 0 { //Potentially problematic. Could be a few reasons why we don't find any configs
+		loadConfigByName("Default.json") //We should always default to.. default
+	} else {
+		newConfig("Default.json")
+	}
 
 	http.HandleFunc("/gettrackdata", displayTrackData)
 	http.Handle("/panel/", http.StripPrefix("/panel/", http.FileServer(http.Dir("./public/panel"))))
 	http.HandleFunc("/repeatcheck", repeatCheckTrackData)
 	http.HandleFunc("/scrobbleget", getScrobCurrentTrackWrapper)
-	//http.HandleFunc("/reloadenv", lEnvWrapper) // this feels a little questionable
+
 	http.HandleFunc("/loadcfg", loadConfWrapper)
 	http.HandleFunc("/loadcfg/{index}", func(w http.ResponseWriter, r *http.Request) {
 		index := r.PathValue("index")
@@ -309,10 +312,10 @@ func main() {
 	errSrv := http.ListenAndServe("localhost:8080", nil)
 	handleErrors(errSrv)
 }
+/*
+func writeConfig(confName string, confData ConfigData) { //This will be super annoying if we're getting all this from a single get request
 
-func writeConfig(confName string, confData ConfigData) {
-
-}
+}*/
 
 func loadAllConfigs() ([]string) {
 	configs := getCfgFiles()
@@ -364,7 +367,7 @@ func newConfig(confName string) {
 	cfg, err := json.MarshalIndent(config, "", "    ")
 
 	if err != nil {
-		cfg, _ = json.Marshal(ConfigData{})
+		cfg, _ = json.MarshalIndent(ConfigData{}, "", "    ")
 		fmt.Println(time.Now().Format(time.StampMilli), "Something went wrong generating new config. Creating blank")
 	}
 	os.WriteFile("./configs/"+confName+".json", cfg, 0644)
