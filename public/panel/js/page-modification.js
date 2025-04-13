@@ -4,6 +4,7 @@ let timeout = 1000;
 
 let isConnected = false;
 let hitRepeat = false;
+let configNames = [""];
 
 if (clientId = "") {
     //Update *something* on the page to tell user they didn't set clientid or their browser is weird
@@ -18,13 +19,13 @@ const timer = ms => new Promise(res => setTimeout(res, ms));
 
 document.addEventListener('DOMContentLoaded', function() {
     clientId = new URLSearchParams(window.location.search).get('client_id');
-    getTrackData().then();
+    getSpotTrackData().then();
 })
 
 function updateCheckTimeout() {
     clearTimeout(repeatTrackTimeoutId);
     if (timeout == 0) {timeout = 500;}
-    repeatTrackTimeoutId = setTimeout(getTrackData, timeout+100);
+    repeatTrackTimeoutId = setTimeout(getSpotTrackData, timeout+100);
 }
 
 function handleGetAuthButton() {
@@ -91,7 +92,7 @@ function parseTimeStamp(timeStr) {
 }
 
 
-async function getTrackData() {
+async function getSpotTrackData() {
     let trackDataResp = await fetch('/gettrackdata', {method: "GET"});
     
 
@@ -102,6 +103,7 @@ async function getTrackData() {
     if (trackData.track_name != "" && trackData.artists != "") {
         document.getElementById("currTrack").textContent = trackData.track_name + " - " + trackData.artists + " " + trackData.time_left + " left";
         document.getElementById("connectStatus").textContent = "Connected.";
+        document.getElementById("authBox").style.display = "none";
         isConnected = true;
     } else {
         document.getElementById("currTrack").textContent = "No song detected.";
@@ -114,7 +116,7 @@ async function getTrackData() {
 
 //Async so we make sure we get data before updating page
 async function handleGetTrackButton() {
-    getTrackData().then(() => {updateCheckTimeout();});
+    getSpotTrackData().then(() => {updateCheckTimeout();});
 }
 
 function handleReverse(str) {
@@ -125,6 +127,20 @@ function handleReverse(str) {
     return str;
 }
 
+function updateDropdown() {
+    let dropdown = document.getElementById("configs");
+
+    dropdown.innerHTML = ''; //make sure we're not adding a million options
+
+    //configNames.forEach(function(name) {
+    for ( let i = 0; i < configNames.length; i++ ) {
+        let confName = configNames[i];
+        let baseOption = document.createElement('option');
+        baseOption.value = i;
+        baseOption.text = confName;
+        dropdown.appendChild(baseOption);
+    }
+}
 
 async function startRepeat() { //Because of how this works, they'll both be evaluated before they get a timeout.
     if (hitRepeat) {return;} //We only need once instance of this running
@@ -132,15 +148,37 @@ async function startRepeat() { //Because of how this works, they'll both be eval
     for (;;) {
         if (timeout < 1000) {timeout += 1000;}
         await timer(timeout);
-        await getTrackData("loop"); //Not a fan of how it runs twice as it evaluates the function because updateCheckTimeout is at the end of this function.
+        await getSpotTrackData("loop"); //Not a fan of how it runs twice as it evaluates the function because updateCheckTimeout is at the end of this function.
     }
 }
+
 
 let authButton = document.getElementById("spotGetAuth");
 
 let getTrackButton = document.getElementById("spotGetTrack");
 
 let repeatGetTrackButton = document.getElementById("repeatTrackCheck");
+
+let getScrobbleButton = document.getElementById("getScrobble");
+getScrobbleButton.addEventListener('click', async () => await fetch("/scrobbleget", {method: "GET"}).then((resp) => console.log(resp.json())));
+
+let getConfigButton = document.getElementById("getConfigs");
+getConfigButton.addEventListener('click', async () => await fetch("/loadcfg", {method: "GET"}).then(
+    (data) => {
+        data.json().then( (jsonstr) => {
+            console.log(jsonstr);
+            configNames = jsonstr.config_names;
+            updateDropdown();
+        }
+        );
+    }
+));
+
+let loadConfigButton = document.getElementById("loadConfig")
+loadConfigButton.addEventListener('click', async () => {
+    let index = document.getElementById("configs").value;
+    await fetch("/loadcfg/"+index, {method: "GET"});
+});
 
 authButton.addEventListener('click', handleGetAuthButton);
 getTrackButton.addEventListener('click', () => handleGetTrackButton(), false);

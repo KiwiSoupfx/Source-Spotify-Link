@@ -6,7 +6,7 @@
 </head>
 <body>
     <div class="source-fl-container">
-        <div class="flex-container">
+        <div id="authBox" class="flex-container">
             <h1>Authorization</h1>
             <p id="connectStatus">Not connected.</p>
             <button id="spotGetAuth" class="slick-button">Spotify Authorization</button>
@@ -17,7 +17,15 @@
             <p id="currTrack">No song detected.</p>
             <button id="spotGetTrack" class="slick-button">Get Track</button>
         </div>
-        <div class="flex-container"><h1>TBD</h1></div>
+        <div id="unknownContainer" class="flex-container">
+            <button id="getConfigs" class="slick-button">Get configs</button>
+            <label for="configs">Select a config</label>
+            <select name="configs" id="configs">
+                <!--Options for configs will show up here-->
+            </select>
+            <button id="loadConfig" class="slick-button">Load config</button>
+            <button id="getScrobble" class="slick-button">Get last.fm song</button>
+        </div>
     </div>
 </body>
 </html>

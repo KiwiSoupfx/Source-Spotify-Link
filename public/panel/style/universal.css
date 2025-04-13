@@ -14,7 +14,9 @@ p {
     display: flex;
     flex-direction: column;
     background-color: rgb(155, 155, 155);
+	min-width: 280px;
     width: 20%;
+	min-height: 80px;
     height: 300px;
     margin-top: 15%;
     margin-right: 20px;
@@ -33,5 +35,7 @@ p {
     align-self: auto;
 }
 
-
-
+#unknownContainer {
+    justify-content: center;
+    align-items: center;
+}

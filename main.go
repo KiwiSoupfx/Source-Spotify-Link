@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -16,22 +17,27 @@ import (
 	"github.com/joho/godotenv"
 )
 
-var currToken = ""
+var (
+	currSpotToken = ""
 
-// var currTokenType = "Bearer"
-// var currExpiresIn = "3600" //in seconds //pick back up later
+	// var currTokenType = "Bearer"
+	// var currExpiresIn = "3600" //in seconds //pick back up later
+	configNames []string
 
-var currCode = ""
-var currRefreshToken = ""
-var currErrors = 0
-var alreadyChecking = false
+	currSpotCode = ""
+	currRefreshToken = ""
+	currErrors = 0
+	alreadyChecking = false
 
-/* Env vars section*/
-var clientId = "" //ideally immutable
-var clientSecret = ""
-var maxErrors = 20
-var cfgTargetPath = ""
-var customMsg = ""
+	/* Env vars section*/
+	clientId = "" //ideally immutable
+	clientSecret = ""
+	maxErrors = 20
+	cfgTargetPath = ""
+	customMsg = ""
+	scrobbleAPIKey = ""
+	lastfmUsername = ""
+)
 
 func getRoot(w http.ResponseWriter, r *http.Request) {
 	fmt.Println(time.Now().Format(time.StampMilli), "root get request")
@@ -42,10 +48,10 @@ func getRoot(w http.ResponseWriter, r *http.Request) {
 
 	code := r.URL.Query().Get("code")
 	if code != "" {
-		currCode = code
+		currSpotCode = code
 	}
 	http.Redirect(w, r, "http://localhost:8080/panel?client_id="+clientId, http.StatusTemporaryRedirect)
-	initAuth("authorization_code")
+	initSpotAuth("authorization_code")
 	//Click the "Ok" to start the process of getting track data automatically
 }
 
@@ -64,14 +70,65 @@ func handleErrors(myError error) {
 		fmt.Println(time.Now().Format(time.StampMilli), myError)
 		currErrors += 1
 		if errorLimitCheck() {
-			log.Fatalln("Fatal Error: Too many errors, exitting") //Prevents you from excessively spamming api. You'll still spam enough to get them to cut you off but at least you'll stop
+			log.Fatalln("Fatal Error: Too many errors, exitting") //Prevents you from excessively spamming api.
 		}
 	}
 }
 
-func getCurrentTrack() (string, string, time.Duration) {
-	if currCode == "" {
-		return "", "", time.Duration(0).Abs()
+func getScrobCurrentTrackWrapper(w http.ResponseWriter, _ *http.Request) {
+	trackName, artistName, timeLeft, platform := getScrobCurrentTrack()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	responseTrackData := &ResponseTrackData{
+		TrackName:         trackName,
+		ArtistsNames:      artistName,
+		TimeLeft:          timeLeft.String(),
+		ListeningPlatform: platform,
+	}
+
+	json.NewEncoder(w).Encode(responseTrackData)
+
+}
+
+func getScrobCurrentTrack() (string, string, time.Duration, string) {
+	//http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=rj&api_key=YOUR_API_KEY&format=json
+
+	if scrobbleAPIKey == "" || lastfmUsername == "" {
+		return "", "", time.Duration(0).Abs(), ""
+	}
+	currentTrackData := ScrobbleTrackData{}
+
+	req, err := http.NewRequest("GET", "http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user="+lastfmUsername+"&api_key="+scrobbleAPIKey+"&format=json", nil)
+	handleErrors(err)
+
+	client := &http.Client{}
+
+	resp, _ := client.Do(req)
+
+	jsonData, errJson := io.ReadAll(resp.Body)
+	handleErrors(errJson)
+
+	errUnmarsh := json.Unmarshal([]byte(jsonData), &currentTrackData)
+	handleErrors(errUnmarsh)
+
+	fmt.Println(time.Now().Format(time.StampMilli), currentTrackData.RecentTracks.Track[0].Artist.Text)
+
+	if currentTrackData.RecentTracks.Track[0].Artist.Text != "" {
+		updatedCustomMsg := strings.Replace(customMsg, "{SongName}", currentTrackData.RecentTracks.Track[0].Name, -1)
+		updatedCustomMsg = strings.Replace(updatedCustomMsg, "{Artists}", currentTrackData.RecentTracks.Track[0].Artist.Text, -1)
+		updatedCustomMsg = strings.Replace(updatedCustomMsg, "{Platform}", "Soundcloud", -1)
+		sb := []byte(updatedCustomMsg)
+		errWF := os.WriteFile(cfgTargetPath, sb, 0644)
+		handleErrors(errWF)
+	}
+
+	return currentTrackData.RecentTracks.Track[0].Name, currentTrackData.RecentTracks.Track[0].Artist.Text, time.Duration(0).Abs(), "Last.fm"
+}
+
+func getSpotCurrentTrack() (string, string, time.Duration, string) {
+	if currSpotCode == "" {
+		return "", "", time.Duration(0).Abs(), ""
 	}
 	currentTrackData := TrackData{}
 
@@ -81,7 +138,7 @@ func getCurrentTrack() (string, string, time.Duration) {
 	client := &http.Client{}
 	req.Header = http.Header{
 		"Content-Type":  {"application/json"},
-		"Authorization": {"Bearer " + currToken},
+		"Authorization": {"Bearer " + currSpotToken},
 	}
 	resp, _ := client.Do(req)
 
@@ -103,33 +160,36 @@ func getCurrentTrack() (string, string, time.Duration) {
 	if len(currentTrackData.Item.Artists) > 0 {
 		updatedCustomMsg := strings.Replace(customMsg, "{SongName}", currentTrackData.Item.Name, -1)
 		updatedCustomMsg = strings.Replace(updatedCustomMsg, "{Artists}", artists, -1)
+		updatedCustomMsg = strings.Replace(updatedCustomMsg, "{Platform}", "Spotify", -1)
 		sb := []byte(updatedCustomMsg)
 		errWF := os.WriteFile(cfgTargetPath, sb, 0644)
 		handleErrors(errWF)
 	}
 
 	if len(currentTrackData.Item.Artists) == 0 && currentTrackData.Item.Name == "" {
-		initAuth("refresh_token") //don't spam the api if we can't read data every 0-0ms
+		initSpotAuth("refresh_token") //don't spam the api if we can't read data every 0-0ms
 	}
 	timeLeft := time.Duration(currentTrackData.Item.DurationMs-currentTrackData.ProgressMs) * time.Millisecond
 
 	//fmt.Println("milliseconds left: ", timeLeft) //debug to make sure we're not hitting the api too much
 	fmt.Println(time.Now().Format(time.StampMilli), "Getting track data")
 
-	return currentTrackData.Item.Name, artists, timeLeft
+	return currentTrackData.Item.Name, artists, timeLeft, "Spotify"
 }
 
 func repeatCheckTrackData(w http.ResponseWriter, _ *http.Request) {
-	if currCode == "" {
+	if currSpotCode == "" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	if alreadyChecking {return}
+	if alreadyChecking {
+		return
+	}
 	alreadyChecking = true
 	for {
-		songName, _, timeLeft := getCurrentTrack()
+		songName, _, timeLeft, _ := getSpotCurrentTrack()
 		if timeLeft == 0 && songName == "" { //Handle no song playing
-			timeLeft = 10 * time.Second //Don't hit the api too much. Maybe go higher
+			timeLeft = 3 * time.Second //Don't hit the api too much. Maybe go higher
 		}
 		if timeLeft < 1*time.Second {
 			timeLeft = 2 * time.Second
@@ -139,12 +199,12 @@ func repeatCheckTrackData(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-func initAuth(grantType string) {
+func initSpotAuth(grantType string) {
 	authData := AuthData{}
 	form := url.Values{}
 
 	if grantType == "authorization_code" { // do code stuff
-		form.Add("code", currCode)
+		form.Add("code", currSpotCode)
 	} else if grantType == "refresh_token" {
 		form.Add("refresh_token", currRefreshToken)
 	}
@@ -170,7 +230,7 @@ func initAuth(grantType string) {
 	handleErrors(errUnmarsh)
 
 	if authData.AccessToken != "" {
-		currToken = authData.AccessToken
+		currSpotToken = authData.AccessToken
 	}
 
 	if authData.RefreshToken != "" {
@@ -179,11 +239,12 @@ func initAuth(grantType string) {
 }
 
 func displayTrackData(w http.ResponseWriter, r *http.Request) {
-	trackName, trackArtists, timeLeft := "", "", time.Duration(0).Abs()
-	if currCode != "" {
-		trackName, trackArtists, timeLeft = getCurrentTrack()
+	trackName, trackArtists, timeLeft, platform := "", "", time.Duration(0).Abs(), ""
+	if currSpotCode != "" {
+		trackName, trackArtists, timeLeft, platform = getSpotCurrentTrack()
 		w.WriteHeader(http.StatusOK)
-	} else {
+	}
+	if trackName == "" {
 		w.WriteHeader(http.StatusUnauthorized)
 	}
 
@@ -192,30 +253,56 @@ func displayTrackData(w http.ResponseWriter, r *http.Request) {
 	//Also use statuses properly* so we know if there's a problem
 
 	responseTrackData := &ResponseTrackData{
-		TrackName:    trackName,
-		ArtistsNames: trackArtists,
-		TimeLeft:     timeLeft.String(),
+		TrackName:         trackName,
+		ArtistsNames:      trackArtists,
+		TimeLeft:          timeLeft.String(),
+		ListeningPlatform: platform,
 	}
 
 	json.NewEncoder(w).Encode(responseTrackData)
 }
 
-func main() {
-	//Alright, time to get yucky
+func loadEnv() {
 	handleErrors(godotenv.Load())
 
 	clientId = os.Getenv("client_id")
 	clientSecret = os.Getenv("client_secret")
 	cfgTargetPath = os.Getenv("escaped_cfg_file_path")
 	customMsg = os.Getenv("custom_message")
+	scrobbleAPIKey = os.Getenv("scrobble_api_key")
+	lastfmUsername = os.Getenv("lastfm_username")
 
 	maxErrorsStr, errError := strconv.ParseInt(os.Getenv("max_errors"), 10, 0)
 	handleErrors(errError)
 	maxErrors = int(maxErrorsStr) //lol???
+}
+
+/*
+func lEnvWrapper(_ http.ResponseWriter, _ *http.Request) {
+	fmt.Println(time.Now().Format(time.StampMilli), "Reloading env.")
+	loadEnv()
+}
+*/
+func main() {
+	//Alright, time to get yucky
+
+	loadEnv()
 
 	http.HandleFunc("/gettrackdata", displayTrackData)
 	http.Handle("/panel/", http.StripPrefix("/panel/", http.FileServer(http.Dir("./public/panel"))))
 	http.HandleFunc("/repeatcheck", repeatCheckTrackData)
+	http.HandleFunc("/scrobbleget", getScrobCurrentTrackWrapper)
+	//http.HandleFunc("/reloadenv", lEnvWrapper) // this feels a little questionable
+	http.HandleFunc("/loadcfg", loadConfWrapper)
+	http.HandleFunc("/loadcfg/{index}", func(w http.ResponseWriter, r *http.Request) {
+		index := r.PathValue("index")
+		intIndex, err := strconv.Atoi(index)
+		if err != nil {
+			fmt.Println(time.Now().Format(time.StampMilli), err)
+			return
+		}
+		loadConfig(intIndex)
+	})
 	http.HandleFunc("/", getRoot)
 
 	fmt.Println(time.Now().Format(time.StampMilli), "Started.")
@@ -223,10 +310,133 @@ func main() {
 	handleErrors(errSrv)
 }
 
+func writeConfig(confName string, confData ConfigData) {
+
+}
+
+func loadAllConfigs() ([]string) {
+	configs := getCfgFiles()
+	if len(configs) < 1 {
+		newConfig("Default")
+		return nil
+	}
+
+	return configs
+}
+
+func loadConfWrapper(w http.ResponseWriter, _ *http.Request) {
+	configNames = loadAllConfigs()
+
+	type Response struct {
+		Names []string `json:"config_names"`
+	} 
+
+	resp := &Response{Names: configNames,}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func getCfgFiles() ([]string){
+
+	fsdir := os.DirFS("./configs")
+
+	matches, err := fs.Glob(fsdir, "*.json")
+	handleErrors(err)
+
+	return matches
+}
+
+func newConfig(confName string) {
+	config := ConfigData{
+		ConfigName: confName,
+		ConfigSettings: ConfigSettings{
+			ClientId: clientId,
+			ClientSecret: clientSecret,
+			ScrobbleAPIKey: scrobbleAPIKey,
+			LastFMUsername: lastfmUsername,
+			EscapedCFGFilePath: cfgTargetPath,
+			MaxErrors: maxErrors,
+			CustomMessage: customMsg,
+		},
+	}
+
+	cfg, err := json.MarshalIndent(config, "", "    ")
+
+	if err != nil {
+		cfg, _ = json.Marshal(ConfigData{})
+		fmt.Println(time.Now().Format(time.StampMilli), "Something went wrong generating new config. Creating blank")
+	}
+	os.WriteFile("./configs/"+confName+".json", cfg, 0644)
+}
+
+func loadConfig(confIdx int) {
+	loadConfigByName(configNames[confIdx])
+}
+
+func loadConfigByName(confName string) {
+	var jsonData ConfigData
+	fileData, err := os.ReadFile("configs/"+confName)
+	handleErrors(err)
+
+	errUnmarsh := json.Unmarshal(fileData, &jsonData)
+	if errUnmarsh != nil {
+		fmt.Println(time.Now().Format(time.StampMilli), errUnmarsh)
+		return
+	}
+
+	clientId = jsonData.ConfigSettings.ClientId
+	clientSecret = jsonData.ConfigSettings.ClientSecret
+	cfgTargetPath = jsonData.ConfigSettings.EscapedCFGFilePath
+	customMsg = jsonData.ConfigSettings.CustomMessage
+	scrobbleAPIKey = jsonData.ConfigSettings.ScrobbleAPIKey
+	lastfmUsername = jsonData.ConfigSettings.LastFMUsername
+
+	maxErrors = jsonData.ConfigSettings.MaxErrors
+}
+
 type ResponseTrackData struct {
-	TrackName    string `json:"track_name"`
-	ArtistsNames string `json:"artists"`
-	TimeLeft     string `json:"time_left"`
+	TrackName         string `json:"track_name"`
+	ArtistsNames      string `json:"artists"`
+	TimeLeft          string `json:"time_left"`
+	ListeningPlatform string `json:"platform"`
+}
+
+type ScrobbleTrackData struct {
+	RecentTracks struct {
+		Track []struct {
+			Artist struct {
+				Mbid string `json:"mbid"`
+				Text string `json:"#text"`
+			} `json:"artist"`
+			Streamable string `json:"streamable"`
+			Image      []struct {
+				Size string `json:"size"`
+				Text string `json:"#text"`
+			} `json:"image"`
+			Mbid  string `json:"mbid"`
+			Album struct {
+				Mbid string `json:"mbid"`
+				Text string `json:"#text"`
+			} `json:"album"`
+			Name string `json:"name"`
+			Attr struct {
+				Nowplaying string `json:"nowplaying"`
+			} `json:"@attr,omitempty"`
+			URL  string `json:"url"`
+			Date struct {
+				Uts  string `json:"uts"`
+				Text string `json:"#text"`
+			} `json:"date,omitempty"`
+		} `json:"track"`
+		Attr struct {
+			User       string `json:"user"`
+			TotalPages string `json:"totalPages"`
+			Page       string `json:"page"`
+			Total      string `json:"total"`
+			PerPage    string `json:"perPage"`
+		} `json:"@attr"`
+	} `json:"recenttracks"`
 }
 
 type TrackData struct {
@@ -358,3 +568,18 @@ type AuthData struct {
 	ExpiresIn    int    `json:"expires_in"`
 	RefreshToken string `json:"refresh_token"`
 }
+
+type ConfigData struct {
+	ConfigName string `json:"config_name"`
+	ConfigSettings ConfigSettings `json:"config_settings"`
+}
+
+type ConfigSettings struct {
+	ClientId string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	ScrobbleAPIKey string `json:"scrobble_api_key"`
+	LastFMUsername string `json:"lastfm_username"`
+	EscapedCFGFilePath string `json:"escaped_cfg_file_path"`
+	MaxErrors int `json:"max_errors"`
+	CustomMessage string `json:"custom_message"`
+} 
