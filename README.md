@@ -1,3 +1,5 @@
+Project abandoned: I will no longer be using Spotify. Things might still work but I wouldn't count on it working forever.
+
 # Source-Spotify-Link
 Automatically updates a cfg file in your game folder (If you give it the right path). Depending on your setup, you may need to manually create the file.
 
@@ -21,4 +23,4 @@ Make sure to click the "Spotify Authorization" button and login if you're logged
 
 Use a bind or type "exec config_name.cfg" into console to run the command.
 
-More customization coming soon.
+~~More customization coming soon.~~
